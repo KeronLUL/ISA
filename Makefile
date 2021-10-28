@@ -1,7 +1,7 @@
 CC = g++
 
 CFLAGS = -pedantic -Wall -Wextra
-LDFLAGS = -lpcap
+LDFLAGS = -lpcap -lssl -lcrypto
 
 TARGET = secret
 
