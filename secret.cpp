@@ -19,6 +19,11 @@
 
 #define MAX_DATA_LEN 1024
 #define SIZE_ETHERNET 16
+#define START 1
+#define TRANSFER 2
+#define END 3
+#define COMPLEMENT(x) (AES_BLOCK_SIZE - (x % AES_BLOCK_SIZE)) 
+const char *ID = "Secretga";
 
 AES_KEY key_e;
 AES_KEY key_d;
@@ -67,23 +72,30 @@ class ArgumentParser {
 };
 
 
+struct secrethdr{
+    char id[AES_BLOCK_SIZE];
+    int type;
+    char *file;
+    int length = 0;
+    int total_length = 0; 
+    char data[MAX_DATA_LEN];
+};
+
 char *encrypt(char *cyphertext, int length){
-    unsigned char *output = (unsigned char *)calloc(length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE)), sizeof(char));
+    unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
         AES_encrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_e);
     }
     return (char *)output;
 }
 
-
 char *decrypt(char *cyphertext, int length){
-    unsigned char *output = (unsigned char *)calloc(length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE)), sizeof(char));
+    unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
         AES_decrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_d);
     }
     return (char *)output;
 }
-
 
 int client(ArgumentParser args){
     struct addrinfo hints, *serverinfo;
@@ -98,7 +110,6 @@ int client(ArgumentParser args){
 		return 1;
 	}
 
-     
     int protocol = serverinfo->ai_family == AF_INET ? IPPROTO_ICMP : IPPROTO_ICMPV6;
     int sock = socket(serverinfo->ai_family, serverinfo->ai_socktype, protocol);
 	if (sock == -1){
@@ -117,8 +128,10 @@ int client(ArgumentParser args){
 	memset(&packet, 0, 1500);
 
 	struct icmphdr *icmp_header = (struct icmphdr *)packet;
+    struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr));
 	icmp_header->code = ICMP_ECHO;
 	icmp_header->checksum = 0;
+
 
     std::ifstream file;
     file.open(args.file);
@@ -128,21 +141,32 @@ int client(ArgumentParser args){
     }
 
     char buff[MAX_DATA_LEN];
-    char *result_cypher;
-    char id[] = "Secretga";
+    char *id =  encrypt((char *)ID ,8);
+    memcpy(secret->id, id, 16);
     memset(&buff, 0, MAX_DATA_LEN);
-    std::streamsize total_length = 0;
-    std::streamsize length; 
+    secret->type = START;
+    //secret->file = (char *)calloc(strlen(args.file), sizeof(char));
+    //strcpy(secret->file, args.file);
+
+    
+    if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
+                0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
+        fprintf(stderr, "sendto bad\n");
+        return 1;
+    }
+    
+    
+    char *result_cypher;
+    int total_length = 0;
     while (!file.eof()) {
         file.read(buff, MAX_DATA_LEN);
-        length = file.gcount();
-        total_length += length;
-        result_cypher = encrypt(buff, length);
+        secret->length = file.gcount();
+        secret->type = TRANSFER;
+        total_length += secret->length;
+        result_cypher = encrypt(buff, secret->length);
+        memcpy(secret->data, result_cypher, secret->length + COMPLEMENT(secret->length));
         
-	    memcpy(packet + sizeof(struct icmphdr), encrypt(id, 8), AES_BLOCK_SIZE); 
-	    memcpy(packet + sizeof(struct icmphdr) + AES_BLOCK_SIZE, &length, sizeof(std::streamsize)); 
-	    memcpy(packet + sizeof(struct icmphdr) + AES_BLOCK_SIZE + sizeof(std::streamsize), result_cypher, length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE))); 
-    	if (sendto(sock, packet, sizeof(struct icmphdr) + AES_BLOCK_SIZE + sizeof(std::streamsize) + length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE)), 
+    	if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
                     0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
     		fprintf(stderr, "sendto bad\n");
     		return 1;
@@ -150,23 +174,28 @@ int client(ArgumentParser args){
         free(result_cypher);
     }
 
-
-    file.close();
+    free(id);
     free(serverinfo);
+    file.close();
     return 0;
 }
 
 void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet){
-    char *id = decrypt((char *)(packet + SIZE_ETHERNET + sizeof(struct iphdr) + sizeof(struct icmphdr)), AES_BLOCK_SIZE);
-    char secret[8];
-    for (int i = 0; i < 8; i++) {
-        secret[i] = id[i];
-    }
+    struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_ETHERNET + sizeof(iphdr));
+    char *id = decrypt(secret->id, AES_BLOCK_SIZE);
 
-    if (strcmp(secret, "Secretga")){
+    if (strcmp(id, ID)){
         return;
     }
 
+    if (secret->type == START) {
+
+    }
+
+    if (secret->type == TRANSFER) {
+        char *decoded = decrypt(secret->data, secret->length);
+        printf("%s\n", decoded);
+    }
 
 }
 
