@@ -11,11 +11,18 @@
 #include <unistd.h>
 #include <fstream>
 #include <net/ethernet.h>
+#include <pcap/pcap.h>
+#include <netinet/ether.h>
+#include <netinet/ip.h>
+#include <netinet/in.h>
+#include <netinet/ip6.h> 
 
-#define MAX_DATA_LEN 1000
+#define MAX_DATA_LEN 1024
+#define SIZE_ETHERNET 16
 
 AES_KEY key_e;
 AES_KEY key_d;
+
 
 class ArgumentParser {
     public:
@@ -50,7 +57,7 @@ class ArgumentParser {
             return 1;
         }
 
-        if (access(file, F_OK) ){
+        if (access(file, F_OK) && !server){
             std::cerr << "Invalid file\n";
             return 1;
         }
@@ -60,24 +67,25 @@ class ArgumentParser {
 };
 
 
-char *encrypt(char *cyphertext){
-    int cyphertextlen = strlen(cyphertext);
-    unsigned char *output = (unsigned char *)calloc(cyphertextlen + (AES_BLOCK_SIZE % cyphertextlen), 1);
-    AES_encrypt((unsigned char*)cyphertext, output, &key_e);
+char *encrypt(char *cyphertext, int length){
+    unsigned char *output = (unsigned char *)calloc(length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE)), sizeof(char));
+    for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
+        AES_encrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_e);
+    }
     return (char *)output;
 }
 
 
-char *decrypt(char *cyphertext){
-    int cyphertextlen = strlen(cyphertext);
-    unsigned char *output = (unsigned char *)calloc(cyphertextlen + (AES_BLOCK_SIZE % cyphertextlen), 1);
-    AES_decrypt((unsigned char*)cyphertext, output, &key_d);
-
+char *decrypt(char *cyphertext, int length){
+    unsigned char *output = (unsigned char *)calloc(length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE)), sizeof(char));
+    for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
+        AES_decrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_d);
+    }
     return (char *)output;
 }
 
 
-int run_client(ArgumentParser args){
+int client(ArgumentParser args){
     struct addrinfo hints, *serverinfo;
 	memset(&hints, 0, sizeof(hints));
 	int result;
@@ -89,7 +97,8 @@ int run_client(ArgumentParser args){
 		fprintf(stderr, "IP error: %s\n", gai_strerror(result));
 		return 1;
 	}
-    
+
+     
     int protocol = serverinfo->ai_family == AF_INET ? IPPROTO_ICMP : IPPROTO_ICMPV6;
     int sock = socket(serverinfo->ai_family, serverinfo->ai_socktype, protocol);
 	if (sock == -1){
@@ -113,24 +122,93 @@ int run_client(ArgumentParser args){
 
     std::ifstream file;
     file.open(args.file);
-    char test[MAX_DATA_LEN];
+    if (!file.is_open()) {
+    	fprintf(stderr, "Couldnt open file\n");
+        return 1;
+    }
+
+    char buff[MAX_DATA_LEN];
     char *result_cypher;
+    char id[] = "Secretga";
+    memset(&buff, 0, MAX_DATA_LEN);
+    std::streamsize total_length = 0;
+    std::streamsize length; 
     while (!file.eof()) {
-        file.read(test, MAX_DATA_LEN);
-        result_cypher = encrypt(test);
-	    memcpy(packet + sizeof(struct icmphdr), result_cypher, strlen(result_cypher));
-        //struct ether_header *p = (struct ether_header *)packet;
+        file.read(buff, MAX_DATA_LEN);
+        length = file.gcount();
+        total_length += length;
+        result_cypher = encrypt(buff, length);
         
-    	if (sendto(sock, packet, sizeof(struct icmphdr) + strlen(result_cypher), 0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-    		fprintf(stderr, "sendto err :)\n");
+	    memcpy(packet + sizeof(struct icmphdr), encrypt(id, 8), AES_BLOCK_SIZE); 
+	    memcpy(packet + sizeof(struct icmphdr) + AES_BLOCK_SIZE, &length, sizeof(std::streamsize)); 
+	    memcpy(packet + sizeof(struct icmphdr) + AES_BLOCK_SIZE + sizeof(std::streamsize), result_cypher, length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE))); 
+    	if (sendto(sock, packet, sizeof(struct icmphdr) + AES_BLOCK_SIZE + sizeof(std::streamsize) + length + (AES_BLOCK_SIZE - (length % AES_BLOCK_SIZE)), 
+                    0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
+    		fprintf(stderr, "sendto bad\n");
     		return 1;
     	}
+        free(result_cypher);
     }
+
+
+    file.close();
+    free(serverinfo);
     return 0;
 }
 
-int run_server(){
-    return 1;
+void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet){
+    char *id = decrypt((char *)(packet + SIZE_ETHERNET + sizeof(struct iphdr) + sizeof(struct icmphdr)), AES_BLOCK_SIZE);
+    char secret[8];
+    for (int i = 0; i < 8; i++) {
+        secret[i] = id[i];
+    }
+
+    if (strcmp(secret, "Secretga")){
+        return;
+    }
+
+
+}
+
+int server(){
+    char errbuf[PCAP_ERRBUF_SIZE];
+    const char *filter = "icmp or icmp6";
+    struct bpf_program fp;
+    pcap_t* handle; 
+    bpf_u_int32 mask;
+    bpf_u_int32 net;
+
+    if (pcap_lookupnet("any", &net, &mask, errbuf) == -1) {
+        std::cerr << errbuf << std::endl;
+        net = 0;
+        mask = 0;
+    }
+
+    if ((handle = pcap_open_live("any", BUFSIZ, 1, 1000, errbuf)) == nullptr){
+        std::cerr << errbuf << std::endl;
+        return 1;
+    }
+    
+    if (pcap_compile(handle, &fp, filter, 0, net) == -1) {
+        std::cerr << "Couldn't parse filter " << filter << ": " << pcap_geterr(handle) << std::endl;
+        pcap_close(handle);
+        return 1;
+    }
+
+    if (pcap_setfilter(handle, &fp) == -1) {
+        std::cerr << "Couldn't install filter " << filter << ": " << pcap_geterr(handle) << std::endl;
+        pcap_freecode(&fp);
+        pcap_close(handle);
+        return 1;
+    }
+
+    if (pcap_loop(handle, 0, gotPacket, nullptr) == PCAP_ERROR){
+        return 1;
+    }
+
+    pcap_freecode(&fp);
+    pcap_close(handle);
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -143,11 +221,11 @@ int main(int argc, char *argv[]) {
     AES_set_decrypt_key((const unsigned char *)"xnorek01", 128, &key_d);
 
     if (!args.server) {
-        if (run_client(args) != 0) {
+        if (client(args) != 0) {
             return 1;
         }
     }else {
-        if (run_server() != 0) {
+        if (server() != 0) {
             return 1;
         }
     }
