@@ -3,6 +3,7 @@
 #include <getopt.h>
 #include <string>
 #include <cstring>
+#include <filesystem>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/ip_icmp.h>
@@ -19,15 +20,17 @@
 
 #define MAX_DATA_LEN 1024
 #define SIZE_ETHERNET 16
-#define START 1
+#define START 1 
 #define TRANSFER 2
 #define END 3
 #define COMPLEMENT(x) (AES_BLOCK_SIZE - (x % AES_BLOCK_SIZE)) 
+
 const char *ID = "Secretga";
+
+std::ofstream server_file;
 
 AES_KEY key_e;
 AES_KEY key_d;
-
 
 class ArgumentParser {
     public:
@@ -62,7 +65,7 @@ class ArgumentParser {
             return 1;
         }
 
-        if (access(file, F_OK) && !server){
+        if ((file != NULL) && (access(file, F_OK)) && !server){
             std::cerr << "Invalid file\n";
             return 1;
         }
@@ -73,9 +76,8 @@ class ArgumentParser {
 
 
 struct secrethdr{
-    char id[AES_BLOCK_SIZE];
+    const char id[AES_BLOCK_SIZE];
     int type;
-    char *file;
     int length = 0;
     int total_length = 0; 
     char data[MAX_DATA_LEN];
@@ -106,20 +108,19 @@ int client(ArgumentParser args){
 	hints.ai_socktype = SOCK_RAW;
 
 	if ((result = getaddrinfo(args.ip, NULL, &hints, &serverinfo)) != 0){
-		fprintf(stderr, "IP error: %s\n", gai_strerror(result));
+        std::cerr << "IP error: " << gai_strerror(result) << std::endl; 
 		return 1;
 	}
 
     int protocol = serverinfo->ai_family == AF_INET ? IPPROTO_ICMP : IPPROTO_ICMPV6;
     int sock = socket(serverinfo->ai_family, serverinfo->ai_socktype, protocol);
 	if (sock == -1){
-        while(serverinfo->ai_next != NULL && sock == -1){
+        for(;serverinfo->ai_next != NULL && sock == -1; serverinfo = serverinfo->ai_next) {
             protocol = serverinfo->ai_family == AF_INET ? IPPROTO_ICMP : IPPROTO_ICMPV6;
             sock = socket(serverinfo->ai_family, serverinfo->ai_socktype, protocol);
-            serverinfo = serverinfo->ai_next;
         }
         if (sock == -1){
-            fprintf(stderr, "Socket error. Make sure you run this program as sudo\n");
+            std::cerr << "Socket error. Make sure you run this program as sudo" << std::endl;
             return 1;
         }
 	}
@@ -134,67 +135,74 @@ int client(ArgumentParser args){
 
 
     std::ifstream file;
-    file.open(args.file);
+    file.open(args.file, std::ios::in | std::ios::binary);
     if (!file.is_open()) {
-    	fprintf(stderr, "Couldnt open file\n");
+        std::cerr << "Couldn't open file" << std::endl;
         return 1;
     }
+
 
     char buff[MAX_DATA_LEN];
     char *id =  encrypt((char *)ID ,8);
-    memcpy(secret->id, id, 16);
-    memset(&buff, 0, MAX_DATA_LEN);
+    memcpy((char *)secret->id, id, 16);
+    char *file_name = encrypt((char *)args.file, strlen(args.file));
+    memcpy(secret->data, file_name, strlen(args.file) + COMPLEMENT(strlen(args.file)));
     secret->type = START;
-    //secret->file = (char *)calloc(strlen(args.file), sizeof(char));
-    //strcpy(secret->file, args.file);
-
-    
+    secret->length = strlen(args.file);
     if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
                 0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-        fprintf(stderr, "sendto bad\n");
+        std::cerr << "Send to failed" << std::endl;
         return 1;
     }
     
-    
+    memset(&buff, 0, MAX_DATA_LEN);
     char *result_cypher;
-    int total_length = 0;
     while (!file.eof()) {
         file.read(buff, MAX_DATA_LEN);
         secret->length = file.gcount();
         secret->type = TRANSFER;
-        total_length += secret->length;
+        secret->total_length += secret->length;
         result_cypher = encrypt(buff, secret->length);
         memcpy(secret->data, result_cypher, secret->length + COMPLEMENT(secret->length));
         
     	if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
                     0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-    		fprintf(stderr, "sendto bad\n");
+            std::cerr << "Send to failed" << std::endl;
     		return 1;
     	}
         free(result_cypher);
     }
 
     free(id);
-    free(serverinfo);
+    freeaddrinfo(serverinfo);
     file.close();
     return 0;
 }
 
 void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet){
     struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_ETHERNET + sizeof(iphdr));
-    char *id = decrypt(secret->id, AES_BLOCK_SIZE);
+    char *id = decrypt((char *)secret->id, AES_BLOCK_SIZE);
 
     if (strcmp(id, ID)){
         return;
     }
 
     if (secret->type == START) {
+        std::string file_name = decrypt(secret->data, secret->length);
+        if (std::filesystem::exists(file_name)) {
+            std::cerr << "File already exists. File will be overwritten" << std::endl;
+        }
 
+        server_file.open(file_name, std::ios_base::app | std::ios::binary | std::ios::out);
     }
 
     if (secret->type == TRANSFER) {
         char *decoded = decrypt(secret->data, secret->length);
-        printf("%s\n", decoded);
+        server_file.write(decoded, secret->length);
+    }
+
+    if (secret->type == END) {
+        server_file.close();
     }
 
 }
