@@ -18,6 +18,7 @@
 #include <netinet/in.h>
 #include <netinet/ip6.h> 
 
+#define PACKET_SIZE 1500
 #define MAX_DATA_LEN 1024
 #define SIZE_ETHERNET 16
 #define START 1 
@@ -28,6 +29,7 @@
 const char *ID = "Secretga";
 
 std::ofstream server_file;
+int total_file_length = 0;
 
 AES_KEY key_e;
 AES_KEY key_d;
@@ -74,12 +76,10 @@ class ArgumentParser {
     }
 };
 
-
 struct secrethdr{
     const char id[AES_BLOCK_SIZE];
     int type;
     int length = 0;
-    int total_length = 0; 
     char data[MAX_DATA_LEN];
 };
 
@@ -99,14 +99,77 @@ char *decrypt(char *cyphertext, int length){
     return (char *)output;
 }
 
+int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
+    char *file_name = encrypt((char *)args.file, strlen(args.file));
+    char *id =  encrypt((char *)ID ,8);
+	char packet[PACKET_SIZE];
+    char buff[MAX_DATA_LEN];
+    char *result_cypher;
+    int total_length = 0;
+	memset(&packet, 0, PACKET_SIZE);
+    memset(&buff, 0, MAX_DATA_LEN);
+
+    std::ifstream file;
+    file.open(args.file, std::ios::in | std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Couldn't open file" << std::endl;
+        return 1;
+    }
+
+	struct icmphdr *icmp_header = (struct icmphdr *)packet;
+    struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr));
+	icmp_header->code = ICMP_ECHO;
+	icmp_header->checksum = 0;
+
+    memcpy((char *)secret->id, id, 16);
+    memcpy(secret->data, file_name, strlen(args.file) + COMPLEMENT(strlen(args.file)));
+    secret->type = START;
+    secret->length = strlen(args.file);
+    if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
+                0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
+        std::cerr << "Send to failed" << std::endl;
+        return 1;
+    }
+    
+    while (!file.eof()) {
+        file.read(buff, MAX_DATA_LEN);
+        secret->length = file.gcount();
+        secret->type = TRANSFER;
+        total_length += secret->length;
+        result_cypher = encrypt(buff, secret->length);
+        memcpy(secret->data, result_cypher, secret->length + COMPLEMENT(secret->length));
+        
+    	if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
+                    0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
+            std::cerr << "Send to failed" << std::endl;
+    		return 1;
+    	}
+        free(result_cypher);
+    }
+
+    secret->length = total_length;
+    secret->type = END;
+    if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - MAX_DATA_LEN, 0, (struct sockaddr *)(serverinfo->ai_addr), 
+                serverinfo->ai_addrlen) == -1){
+        std::cerr << "Send to failed" << std::endl;
+        return 1;
+    }
+
+    free(id);
+    free(file_name);
+    file.close();
+    return 0;
+}
+
+
 int client(ArgumentParser args){
     struct addrinfo hints, *serverinfo;
 	memset(&hints, 0, sizeof(hints));
-	int result;
 
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_RAW;
 
+    int result;
 	if ((result = getaddrinfo(args.ip, NULL, &hints, &serverinfo)) != 0){
         std::cerr << "IP error: " << gai_strerror(result) << std::endl; 
 		return 1;
@@ -125,57 +188,11 @@ int client(ArgumentParser args){
         }
 	}
 
-	char packet[1500];
-	memset(&packet, 0, 1500);
-
-	struct icmphdr *icmp_header = (struct icmphdr *)packet;
-    struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr));
-	icmp_header->code = ICMP_ECHO;
-	icmp_header->checksum = 0;
-
-
-    std::ifstream file;
-    file.open(args.file, std::ios::in | std::ios::binary);
-    if (!file.is_open()) {
-        std::cerr << "Couldn't open file" << std::endl;
+    if (send_file(args, serverinfo, sock)) {
         return 1;
     }
 
-
-    char buff[MAX_DATA_LEN];
-    char *id =  encrypt((char *)ID ,8);
-    memcpy((char *)secret->id, id, 16);
-    char *file_name = encrypt((char *)args.file, strlen(args.file));
-    memcpy(secret->data, file_name, strlen(args.file) + COMPLEMENT(strlen(args.file)));
-    secret->type = START;
-    secret->length = strlen(args.file);
-    if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
-                0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-        std::cerr << "Send to failed" << std::endl;
-        return 1;
-    }
-    
-    memset(&buff, 0, MAX_DATA_LEN);
-    char *result_cypher;
-    while (!file.eof()) {
-        file.read(buff, MAX_DATA_LEN);
-        secret->length = file.gcount();
-        secret->type = TRANSFER;
-        secret->total_length += secret->length;
-        result_cypher = encrypt(buff, secret->length);
-        memcpy(secret->data, result_cypher, secret->length + COMPLEMENT(secret->length));
-        
-    	if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
-                    0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-            std::cerr << "Send to failed" << std::endl;
-    		return 1;
-    	}
-        free(result_cypher);
-    }
-
-    free(id);
     freeaddrinfo(serverinfo);
-    file.close();
     return 0;
 }
 
@@ -193,15 +210,20 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
             std::cerr << "File already exists. File will be overwritten" << std::endl;
         }
 
-        server_file.open(file_name, std::ios_base::app | std::ios::binary | std::ios::out);
+        server_file.open(file_name, std::ios::binary | std::ios::out);
     }
 
     if (secret->type == TRANSFER) {
         char *decoded = decrypt(secret->data, secret->length);
         server_file.write(decoded, secret->length);
+        total_file_length += secret->length;
     }
 
     if (secret->type == END) {
+        if (total_file_length != secret->length) {
+            std::cerr << "Total lenght of files is different, some packets may have been lost" << std::endl;
+        }
+        total_file_length = 0;
         server_file.close();
     }
 
