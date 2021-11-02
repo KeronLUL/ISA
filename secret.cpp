@@ -4,27 +4,30 @@
 #include <string>
 #include <cstring>
 #include <filesystem>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <netinet/ip_icmp.h>
-#include <openssl/aes.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <fstream>
-#include <net/ethernet.h>
+#include <openssl/aes.h>
 #include <pcap/pcap.h>
+#include <pcap/sll.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <netinet/ip_icmp.h>
+#include <net/ethernet.h>
 #include <netinet/ether.h>
 #include <netinet/ip.h>
 #include <netinet/in.h>
 #include <netinet/ip6.h> 
 
-#define PACKET_SIZE 1500
-#define MAX_DATA_LEN 1024
-#define SIZE_ETHERNET 16
-#define START 1 
+#define PACKET_SIZE 1500    // Size of a packet
+#define MAX_DATA_LEN 1024   // Maximum length of data in packet
+#define SIZE_SLL 16         // Size of Linux cooked capture header
+#define TYPE_IP 8           // IPv4 type in Linux cooked capture
+#define TYPE_IPV6 56710     // IPv6 type in Linux cooked capture
+#define START 1
 #define TRANSFER 2
 #define END 3
-#define COMPLEMENT(x) (AES_BLOCK_SIZE - (x % AES_BLOCK_SIZE)) 
+#define COMPLEMENT(x) (AES_BLOCK_SIZE - (x % AES_BLOCK_SIZE))   // Complement of X to be divisible by AES_BLOCK_SIZE
 
 const char *ID = "Secretga";
 
@@ -34,12 +37,23 @@ int total_file_length = 0;
 AES_KEY key_e;
 AES_KEY key_d;
 
+/**
+ *  Class for parsing program arguments
+ */
 class ArgumentParser {
     public:
         const char* file = NULL;
         const char* ip = NULL;
         bool server = false;
 
+    /**
+     *  Parse arguments
+     * 
+     *  @param  argc - Number of arguments
+     *  @param  argv - Arguments
+     * 
+     *  @return Returns 0 if everything is ok, else returns 1
+     */
     int argumentParser(int argc, char *argv[]){
         const char* const opts = "r:s:l";
         int opt = 0;
@@ -76,13 +90,24 @@ class ArgumentParser {
     }
 };
 
+/**
+ *  Structure that contains necessary information to be send through packet
+ */
 struct secrethdr{
-    const char id[AES_BLOCK_SIZE];
-    int type;
-    int length = 0;
-    char data[MAX_DATA_LEN];
+    const char id[AES_BLOCK_SIZE];  // ID to be recognized by server
+    int type;                       // Type of packet
+    int length = 0;                 // Length of data
+    char data[MAX_DATA_LEN];        // Data
 };
 
+/**
+ *  Encrypt given data
+ * 
+ *  @param cyphertext - Data to be encrypted
+ *  @param length - Length of data
+ * 
+ *  @return - Returns encrypted data
+ */
 char *encrypt(char *cyphertext, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
@@ -91,6 +116,14 @@ char *encrypt(char *cyphertext, int length){
     return (char *)output;
 }
 
+/**
+ *  Decrypt given data
+ * 
+ *  @param cyphertext - Data to be decrypted
+ *  @param length - Length of data
+ * 
+ *  @return - Returns decrypted data
+ */
 char *decrypt(char *cyphertext, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
@@ -99,6 +132,16 @@ char *decrypt(char *cyphertext, int length){
     return (char *)output;
 }
 
+
+/**
+ *  Send file given by arguments to given IP
+ * 
+ *  @param args - Program arguments
+ *  @param serverinfo - Structure thats stores info about where to send packet
+ *  @param sock - Socket
+ *  
+ *  @returns - Returns 0 if ok, else 1
+ */
 int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     char *file_name = encrypt((char *)args.file, strlen(args.file));
     char *id =  encrypt((char *)ID ,8);
@@ -161,7 +204,13 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     return 0;
 }
 
-
+/**
+ *  Run client. Prepare socket and server info
+ * 
+ *  @param args - Program arguments
+ *  
+ *  @return - Returns 0 if ok, else returns 1
+ */
 int client(ArgumentParser args){
     struct addrinfo hints, *serverinfo;
 	memset(&hints, 0, sizeof(hints));
@@ -196,8 +245,26 @@ int client(ArgumentParser args){
     return 0;
 }
 
+
+/**
+ *  Handle incoming packets. If it's packet send by client write packet data into file
+ * 
+ *  @param args - Useless
+ *  @param header - Useless
+ *  @param packet - Captured packet
+ */
 void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet){
-    struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_ETHERNET + sizeof(iphdr));
+    struct sll_header *sll = (struct sll_header *)packet;
+    struct secrethdr *secret;
+    if (sll->sll_protocol == TYPE_IP){
+        secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL+ sizeof(iphdr));
+    }else if (sll->sll_protocol == TYPE_IPV6) {
+        secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL+ sizeof(ip6_hdr));
+    }else {
+        std::cout << "Packet doesn't contain IP protocol" << std::endl;
+        return;
+    }
+
     char *id = decrypt((char *)secret->id, AES_BLOCK_SIZE);
 
     if (strcmp(id, ID)){
@@ -211,9 +278,17 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
         }
 
         server_file.open(file_name, std::ios::binary | std::ios::out);
+        if (!server_file.is_open()) {
+            std::cerr << "Couldn't open file" << std::endl;
+            return;
+        }
     }
 
     if (secret->type == TRANSFER) {
+        if (!server_file.is_open()) {
+            std::cerr << "Couldn't open file" << std::endl;
+            return;
+        }
         char *decoded = decrypt(secret->data, secret->length);
         server_file.write(decoded, secret->length);
         total_file_length += secret->length;
@@ -229,6 +304,12 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
 
 }
 
+/**
+ *  Run server using pcap to capture incoming packets on "any" interface
+ *  Inspired https://www.tcpdump.org/pcap.html
+ * 
+ *  @return - Returns 0 if ok, else returns 1
+ */
 int server(){
     char errbuf[PCAP_ERRBUF_SIZE];
     const char *filter = "icmp or icmp6";
@@ -276,6 +357,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Set encryption key and decryption key
     AES_set_encrypt_key((const unsigned char *)"xnorek01", 128, &key_e);
     AES_set_decrypt_key((const unsigned char *)"xnorek01", 128, &key_d);
 
