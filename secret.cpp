@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fstream>
-#include <poll.h>
 #include <openssl/aes.h>
 #include <pcap/pcap.h>
 #include <pcap/sll.h>
@@ -318,7 +317,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
         return;
     }
 
-    if (secret->type == START || secret->type == 0) {
+    if (secret->type == START) {
         char *name = decrypt(secret->data, secret->length);
         std::string file_name = name;
         free(name);   
