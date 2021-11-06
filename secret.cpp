@@ -1,12 +1,13 @@
-#include <stdio.h>
 #include <iostream>
-#include <getopt.h>
+#include <vector>
 #include <string>
 #include <cstring>
 #include <filesystem>
 #include <stdlib.h>
 #include <unistd.h>
 #include <fstream>
+#include <poll.h>
+#include <getopt.h>
 #include <openssl/aes.h>
 #include <pcap/pcap.h>
 #include <pcap/sll.h>
@@ -22,9 +23,7 @@
 #define PACKET_SIZE 1500    // Size of a packet
 #define MAX_DATA_LEN 1024   // Maximum length of data in packet
 #define SIZE_SLL 16         // Size of Linux cooked capture header
-#define TYPE_IP 8           // IPv4 type in Linux cooked capture
-#define TYPE_IPV6 56710     // IPv6 type in Linux cooked capture
-#define BUFF_SIZE 16384     // Bigger buffer for pcap so it doesn't overflow
+#define BUFF_SIZE 65616     // Bigger buffer for pcap so it doesn't overflow
 #define START 1
 #define TRANSFER 2
 #define END 3
@@ -111,6 +110,10 @@ struct secrethdr{
  */
 char *encrypt(char *cyphertext, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
+    if (output == NULL) {
+        std::cerr << "Allocation failed" << std::endl;
+        return NULL;
+    }
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
         AES_encrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_e);
     }
@@ -127,6 +130,10 @@ char *encrypt(char *cyphertext, int length){
  */
 char *decrypt(char *cyphertext, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
+    if (output == NULL) {
+        std::cerr << "Allocation failed" << std::endl;
+        return NULL;
+    }
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
         AES_decrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_d);
     }
@@ -178,10 +185,13 @@ uint16_t checksum (uint16_t *addr, int len) {
 int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     char *file_name = encrypt((char *)args.file, strlen(args.file));
     char *id =  encrypt((char *)ID ,8);
+    if (file_name == NULL || id == NULL) return 1;
+
 	char packet[PACKET_SIZE];
     char buff[MAX_DATA_LEN];
     char *result_cypher;
     int total_length = 0;
+    int poll_events;
 	memset(&packet, 0, PACKET_SIZE);
     memset(&buff, 0, MAX_DATA_LEN);
 
@@ -193,7 +203,12 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     }
 
 	struct icmphdr *icmp_header = (struct icmphdr *)packet;
-    struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr)); 
+    struct secrethdr *secret = (struct secrethdr *)(packet + sizeof(struct icmphdr));
+    struct pollfd pfds[1];
+
+    pfds[0].fd = sock;
+    pfds[0].events = POLLOUT;
+ 
 
 	icmp_header->code = ICMP_ECHO;
 	icmp_header->checksum = 0;
@@ -202,7 +217,8 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     memcpy(secret->data, file_name, strlen(args.file) + COMPLEMENT(strlen(args.file)));
     secret->type = START;
     secret->length = strlen(args.file);
-    icmp_header->checksum = checksum((uint16_t *)packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length));
+    icmp_header->checksum = checksum((uint16_t *)packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - 
+                                        (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length));
     if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
                 0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
         std::cerr << "Send to failed" << std::endl;
@@ -219,13 +235,23 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
         total_length += secret->length;
 
         result_cypher = encrypt(buff, secret->length);
+        if (result_cypher == NULL) return 1;
+
         memcpy(secret->data, result_cypher, secret->length + COMPLEMENT(secret->length));
 
-        icmp_header->checksum =  checksum((uint16_t *)packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length));
+        icmp_header->checksum =  checksum((uint16_t *)packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - 
+                                            (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length));
 
-        if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
-                    0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-            std::cerr << "Send to failed" << std::endl;
+        poll_events = poll(pfds, 1, -1);
+        if (poll_events != -1) {
+            if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
+                        0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
+                std::cerr << "Send to failed" << std::endl;
+                return 1;
+            }
+        }else {
+            std::cerr << "Poll error" << std::endl;
+            free(result_cypher);
             return 1;
         }
         free(result_cypher);
@@ -301,9 +327,9 @@ int client(ArgumentParser args){
 void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet){
     struct sll_header *sll = (struct sll_header *)packet;
     struct secrethdr *secret;
-    if (sll->sll_protocol == TYPE_IP){
+    if (ntohs(sll->sll_protocol) == ETHERTYPE_IP){
         secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL + sizeof(iphdr));
-    }else if (sll->sll_protocol == TYPE_IPV6) {
+    }else if (ntohs(sll->sll_protocol) == ETHERTYPE_IPV6) {
         secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL + sizeof(ip6_hdr));
     }else {
         std::cout << "Packet doesn't contain IP protocol" << std::endl;
@@ -311,6 +337,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
     }
 
     char *id = decrypt((char *)secret->id, AES_BLOCK_SIZE);
+    if (id == NULL) return;
 
     if (strcmp(id, ID)){
         free(id);
@@ -319,6 +346,8 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
 
     if (secret->type == START) {
         char *name = decrypt(secret->data, secret->length);
+        if (name == NULL) return;
+        
         std::string file_name = name;
         free(name);   
         if (std::filesystem::exists(file_name)) {
@@ -338,6 +367,8 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
             return;
         }
         char *decoded = decrypt(secret->data, secret->length);
+        if (decoded == NULL) return;
+        
         server_file.write(decoded, secret->length);
         total_file_length += secret->length;
         free(decoded);
