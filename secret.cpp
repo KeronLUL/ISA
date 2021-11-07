@@ -33,6 +33,7 @@ const char *ID = "Secretga";
 
 std::ofstream server_file;
 int total_file_length = 0;
+std::vector<char> buffer;
 
 AES_KEY key_e;
 AES_KEY key_d;
@@ -208,7 +209,6 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
 
     pfds[0].fd = sock;
     pfds[0].events = POLLOUT;
- 
 
 	icmp_header->code = ICMP_ECHO;
 	icmp_header->checksum = 0;
@@ -267,6 +267,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
                 serverinfo->ai_addrlen) == -1){
         std::cerr << "Send to failed" << std::endl;
         return 1;
+        
     }
 
     free(id);
@@ -338,7 +339,6 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
 
     char *id = decrypt((char *)secret->id, AES_BLOCK_SIZE);
     if (id == NULL) return;
-
     if (strcmp(id, ID)){
         free(id);
         return;
@@ -369,20 +369,29 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
         char *decoded = decrypt(secret->data, secret->length);
         if (decoded == NULL) return;
         
-        server_file.write(decoded, secret->length);
+        buffer.insert(buffer.end(), decoded, decoded + secret->length);
+
+        if (buffer.size() >= 5242880) {
+            server_file.write(buffer.data(), buffer.size()); 
+            buffer.clear();
+        }
         total_file_length += secret->length;
         free(decoded);
     }
 
     if (secret->type == END) {
+        if (buffer.size() != 0) {
+            server_file.write(buffer.data(), buffer.size());
+            buffer.clear();
+        }
         if (total_file_length != secret->length) {
             std::cerr << "Total lenght of files is different, some packets may have been lost" << std::endl;
         }
         total_file_length = 0;
         server_file.close();
     }
-    free(id);
 
+    free(id);
 }
 
 /**
