@@ -43,8 +43,8 @@ AES_KEY key_d;
  */
 class ArgumentParser {
     public:
-        const char* file = NULL;
-        const char* ip = NULL;
+        const char* file = nullptr;
+        const char* ip = nullptr;
         bool server = false;
 
     /**
@@ -77,12 +77,12 @@ class ArgumentParser {
             }
         }
 
-        if ((file == NULL || ip == NULL) && !server) {
+        if ((file == nullptr || ip == nullptr) && !server) {
             std::cerr << "Missing some arguments\n";
             return 1;
         }
 
-        if ((file != NULL) && (access(file, F_OK)) && !server){
+        if ((file != nullptr) && (access(file, F_OK)) && !server){
             std::cerr << "Invalid file\n";
             return 1;
         }
@@ -111,9 +111,9 @@ struct secrethdr{
  */
 char *encrypt(char *cyphertext, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
-    if (output == NULL) {
+    if (output == nullptr) {
         std::cerr << "Allocation failed" << std::endl;
-        return NULL;
+        return nullptr;
     }
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
         AES_encrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_e);
@@ -131,9 +131,9 @@ char *encrypt(char *cyphertext, int length){
  */
 char *decrypt(char *cyphertext, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
-    if (output == NULL) {
+    if (output == nullptr) {
         std::cerr << "Allocation failed" << std::endl;
-        return NULL;
+        return nullptr;
     }
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
         AES_decrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_d);
@@ -186,7 +186,7 @@ uint16_t checksum (uint16_t *addr, int len) {
 int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     char *file_name = encrypt((char *)args.file, strlen(args.file));
     char *id =  encrypt((char *)ID ,8);
-    if (file_name == NULL || id == NULL) return 1;
+    if (file_name == nullptr || id == nullptr) return 1;
 
 	char packet[PACKET_SIZE];
     char buff[MAX_DATA_LEN];
@@ -235,7 +235,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
         total_length += secret->length;
 
         result_cypher = encrypt(buff, secret->length);
-        if (result_cypher == NULL) return 1;
+        if (result_cypher == nullptr) return 1;
 
         memcpy(secret->data, result_cypher, secret->length + COMPLEMENT(secret->length));
 
@@ -291,7 +291,7 @@ int client(ArgumentParser args){
 	hints.ai_socktype = SOCK_RAW;
 
     int result;
-	if ((result = getaddrinfo(args.ip, NULL, &hints, &serverinfo)) != 0){
+	if ((result = getaddrinfo(args.ip, nullptr, &hints, &serverinfo)) != 0){
         std::cerr << "IP error: " << gai_strerror(result) << std::endl; 
 		return 1;
 	}
@@ -299,7 +299,7 @@ int client(ArgumentParser args){
     int protocol = serverinfo->ai_family == AF_INET ? (int)IPPROTO_ICMP : (int)IPPROTO_ICMPV6;
     int sock = socket(serverinfo->ai_family, serverinfo->ai_socktype, protocol);
 	if (sock == -1){
-        for(;serverinfo->ai_next != NULL && sock == -1; serverinfo = serverinfo->ai_next) {
+        for(;serverinfo->ai_next != nullptr && sock == -1; serverinfo = serverinfo->ai_next) {
             protocol = serverinfo->ai_family == AF_INET ? (int)IPPROTO_ICMP : (int)IPPROTO_ICMPV6;
             sock = socket(serverinfo->ai_family, serverinfo->ai_socktype, protocol);
         }
@@ -338,7 +338,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
     }
 
     char *id = decrypt((char *)secret->id, AES_BLOCK_SIZE);
-    if (id == NULL) return;
+    if (id == nullptr) return;
     if (strcmp(id, ID)){
         free(id);
         return;
@@ -346,7 +346,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
 
     if (secret->type == START) {
         char *name = decrypt(secret->data, secret->length);
-        if (name == NULL) return;
+        if (name == nullptr) return;
         
         std::string file_name = name;
         free(name);   
@@ -367,7 +367,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
             return;
         }
         char *decoded = decrypt(secret->data, secret->length);
-        if (decoded == NULL) return;
+        if (decoded == nullptr) return;
         
         buffer.insert(buffer.end(), decoded, decoded + secret->length);
 
