@@ -1,6 +1,6 @@
 CC = g++
 
-CFLAGS = -std=c++17 -pedantic -Wall -Wextra
+CFLAGS = -std=c++17 -pedantic
 LDFLAGS = -lpcap -lssl -lcrypto
 
 TARGET = secret
@@ -12,3 +12,6 @@ $(TARGET): $(TARGET).cpp
 
 clean:
 		$(RM) $(TARGET)
+
+tar:
+		tar -cvf xnorek01.tar Makefile secret.cpp secret.1

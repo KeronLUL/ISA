@@ -29,11 +29,13 @@
 #define END 3
 #define COMPLEMENT(x) (AES_BLOCK_SIZE - (x % AES_BLOCK_SIZE))   // Complement of X to be divisible by AES_BLOCK_SIZE
 
+using namespace std;
+
 const char *ID = "Secretga";
 
-std::ofstream server_file;
+ofstream server_file;
 int total_file_length = 0;
-std::vector<char> buffer;
+vector<char> buffer;
 
 AES_KEY key_e;
 AES_KEY key_d;
@@ -72,18 +74,18 @@ class ArgumentParser {
                     break;
                 case '?':
                 default:
-                    std::cerr << "Invalid arguments\n";
+                    cerr << "Invalid arguments\n";
                     return 1;
             }
         }
 
         if ((file == nullptr || ip == nullptr) && !server) {
-            std::cerr << "Missing some arguments\n";
+            cerr << "Missing some arguments\n";
             return 1;
         }
 
         if ((file != nullptr) && (access(file, F_OK)) && !server){
-            std::cerr << "Invalid file\n";
+            cerr << "Invalid file\n";
             return 1;
         }
 
@@ -104,19 +106,19 @@ struct secrethdr{
 /**
  *  Encrypt given data
  * 
- *  @param cyphertext - Data to be encrypted
+ *  @param data - Data to be encrypted
  *  @param length - Length of data
  * 
  *  @return - Returns encrypted data
  */
-char *encrypt(char *cyphertext, int length){
+char *encrypt(char *data, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     if (output == nullptr) {
-        std::cerr << "Allocation failed" << std::endl;
+        cerr << "Allocation failed" << endl;
         return nullptr;
     }
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
-        AES_encrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_e);
+        AES_encrypt((unsigned char*)(data + shift), (output + shift), &key_e);
     }
     return (char *)output;
 }
@@ -124,19 +126,19 @@ char *encrypt(char *cyphertext, int length){
 /**
  *  Decrypt given data
  * 
- *  @param cyphertext - Data to be decrypted
+ *  @param data - Data to be decrypted
  *  @param length - Length of data
  * 
  *  @return - Returns decrypted data
  */
-char *decrypt(char *cyphertext, int length){
+char *decrypt(char *data, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     if (output == nullptr) {
-        std::cerr << "Allocation failed" << std::endl;
+        cerr << "Allocation failed" << endl;
         return nullptr;
     }
     for (int shift = 0; shift < length; shift += AES_BLOCK_SIZE) {
-        AES_decrypt((unsigned char*)(cyphertext + shift), (output + shift), &key_d);
+        AES_decrypt((unsigned char*)(data + shift), (output + shift), &key_d);
     }
     return (char *)output;
 }
@@ -196,10 +198,10 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
 	memset(&packet, 0, PACKET_SIZE);
     memset(&buff, 0, MAX_DATA_LEN);
 
-    std::ifstream file;
-    file.open(args.file, std::ios::in | std::ios::binary);
+    ifstream file;
+    file.open(args.file, ios::in | ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Couldn't open file" << std::endl;
+        cerr << "Couldn't open file" << endl;
         return 1;
     }
 
@@ -217,11 +219,15 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     memcpy(secret->data, file_name, strlen(args.file) + COMPLEMENT(strlen(args.file)));
     secret->type = START;
     secret->length = strlen(args.file);
+    if (secret->length > 1024) {
+        cerr << "File name is too big" << endl;
+        return 1;
+    }
     icmp_header->checksum = checksum((uint16_t *)packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - 
                                         (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length));
     if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
                 0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-        std::cerr << "Send to failed" << std::endl;
+        cerr << "Send to failed" << endl;
         return 1;
     }
 
@@ -246,11 +252,11 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
         if (poll_events != -1) {
             if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - (MAX_DATA_LEN - secret->length) + COMPLEMENT(secret->length), 
                         0, (struct sockaddr *)(serverinfo->ai_addr), serverinfo->ai_addrlen) == -1){
-                std::cerr << "Send to failed" << std::endl;
+                cerr << "Send to failed" << endl;
                 return 1;
             }
         }else {
-            std::cerr << "Poll error" << std::endl;
+            cerr << "Poll error" << endl;
             free(result_cypher);
             return 1;
         }
@@ -265,7 +271,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     icmp_header->checksum = checksum((uint16_t *)packet, sizeof(struct icmphdr) + sizeof( struct secrethdr));
     if (sendto(sock, packet, sizeof(struct icmphdr) + sizeof(struct secrethdr) - MAX_DATA_LEN, 0, (struct sockaddr *)(serverinfo->ai_addr), 
                 serverinfo->ai_addrlen) == -1){
-        std::cerr << "Send to failed" << std::endl;
+        cerr << "Send to failed" << endl;
         return 1;
         
     }
@@ -292,7 +298,7 @@ int client(ArgumentParser args){
 
     int result;
 	if ((result = getaddrinfo(args.ip, nullptr, &hints, &serverinfo)) != 0){
-        std::cerr << "IP error: " << gai_strerror(result) << std::endl; 
+        cerr << "IP error: " << gai_strerror(result) << endl; 
 		return 1;
 	}
 
@@ -304,7 +310,7 @@ int client(ArgumentParser args){
             sock = socket(serverinfo->ai_family, serverinfo->ai_socktype, protocol);
         }
         if (sock == -1){
-            std::cerr << "Socket error. Make sure you run this program as sudo" << std::endl;
+            cerr << "Socket error. Make sure you run this program as sudo" << endl;
             return 1;
         }
 	}
@@ -325,7 +331,7 @@ int client(ArgumentParser args){
  *  @param header - Useless
  *  @param packet - Captured packet
  */
-void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *packet){
+void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet){
     struct sll_header *sll = (struct sll_header *)packet;
     struct secrethdr *secret;
     if (ntohs(sll->sll_protocol) == ETHERTYPE_IP){
@@ -333,7 +339,7 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
     }else if (ntohs(sll->sll_protocol) == ETHERTYPE_IPV6) {
         secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL + sizeof(ip6_hdr));
     }else {
-        std::cout << "Packet doesn't contain IP protocol" << std::endl;
+        cout << "Packet doesn't contain IP protocol" << endl;
         return;
     }
 
@@ -348,22 +354,22 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
         char *name = decrypt(secret->data, secret->length);
         if (name == nullptr) return;
         
-        std::string file_name = name;
+        string file_name = name;
         free(name);   
-        if (std::filesystem::exists(file_name)) {
-            std::cerr << "File already exists. File will be overwritten" << std::endl;
+        if (filesystem::exists(file_name)) {
+            cerr << "File already exists. File will be overwritten" << endl;
         }
 
-        server_file.open(file_name, std::ios::binary | std::ios::out);
+        server_file.open(file_name, ios::binary | ios::out);
         if (!server_file.is_open()) {
-            std::cerr << "Couldn't open file" << std::endl;
+            cerr << "Couldn't open file" << endl;
             return;
         }
     }
 
     if (secret->type == TRANSFER) {
         if (!server_file.is_open()) {
-            std::cerr << "Couldn't open file" << std::endl;
+            cerr << "Couldn't open file" << endl;
             return;
         }
         char *decoded = decrypt(secret->data, secret->length);
@@ -385,10 +391,11 @@ void gotPacket(u_char *args, const struct pcap_pkthdr *header, const u_char *pac
             buffer.clear();
         }
         if (total_file_length != secret->length) {
-            std::cerr << "Total lenght of files is different, some packets may have been lost" << std::endl;
+            cerr << "Total lenght of files is different, some packets may have been lost" << endl;
         }
         total_file_length = 0;
         server_file.close();
+        cout << "File transfered" << endl;
     }
 
     free(id);
@@ -409,30 +416,30 @@ int server(){
     bpf_u_int32 net;
 
     if (pcap_lookupnet("any", &net, &mask, errbuf) == -1) {
-        std::cerr << errbuf << std::endl;
+        cerr << errbuf << endl;
         net = 0;
         mask = 0;
     }
 
     if ((handle = pcap_open_live("any", BUFF_SIZE, 1, 1000, errbuf)) == nullptr){
-        std::cerr << errbuf << std::endl;
+        cerr << errbuf << endl;
         return 1;
     }
     
     if (pcap_compile(handle, &fp, filter, 0, net) == -1) {
-        std::cerr << "Couldn't parse filter " << filter << ": " << pcap_geterr(handle) << std::endl;
+        cerr << "Couldn't parse filter " << filter << ": " << pcap_geterr(handle) << endl;
         pcap_close(handle);
         return 1;
     }
 
     if (pcap_setfilter(handle, &fp) == -1) {
-        std::cerr << "Couldn't install filter " << filter << ": " << pcap_geterr(handle) << std::endl;
+        cerr << "Couldn't install filter " << filter << ": " << pcap_geterr(handle) << endl;
         pcap_freecode(&fp);
         pcap_close(handle);
         return 1;
     }
 
-    if (pcap_loop(handle, 0, gotPacket, nullptr) == PCAP_ERROR){
+    if (pcap_loop(handle, 0, got_packet, nullptr) == PCAP_ERROR){
         return 1;
     }
 
