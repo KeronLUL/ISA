@@ -144,7 +144,7 @@ char *decrypt_data(char *data, int length){
 }
 
 /**
- *  Function taken form ISA exaple icmp4.c
+ *  Function taken from ISA exaple icmp4.c
  *  Calculate checksum
  */
 uint16_t checksum (uint16_t *addr, int len) {
