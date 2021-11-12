@@ -106,7 +106,7 @@ Program používá \emph{AES} šifrování. Jako klíč je použit \emph{xnorek0
 
 
 \begin{minted}{c++}
-char *encrypt(char *data, int length){
+char *encrypt_data(char *data, int length){
     unsigned char *output = (unsigned char *)calloc(length + 
                                     COMPLEMENT(length), sizeof(char));
     if (output == nullptr) {
@@ -132,12 +132,12 @@ Uvedený kód výše je funkce pro zašifrování textu. Nejdříve si musíme a
 
 Poté funkce iteruje skrze pole zadané parametrem data a každých 16 bytů zašifruje a uloží do pole output. Po zašifrování funkce vrací pole output s plně zašifrovanými daty.
 
-Funkce na rozšifrování dat decrypt funguje analogicky, pouze se volá funkce \textbf{AES\_decrypt} místo funkce \textbf{AES\_encrypt}.
+Funkce na rozšifrování dat \textbf{decrypt\_data} funguje analogicky, pouze se volá funkce \textbf{AES\_decrypt} místo funkce \textbf{AES\_encrypt}.
 
 \subsection{Struktura pro vlastní protokol}
 V posílaných paketech je uložena vlastní struktura s názvem secrethdr, díky které je možné jednoduše identifikovat jestli se jedná o paket poslaný klientem a také umožňuje snadný přístup k datům.
 
-\vspace{0.5cm}
+\newpage
 
 \begin{minted}{c++}
 struct secrethdr{

@@ -111,7 +111,7 @@ struct secrethdr{
  * 
  *  @return - Returns encrypted data
  */
-char *encrypt(char *data, int length){
+char *encrypt_data(char *data, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     if (output == nullptr) {
         cerr << "Allocation failed" << endl;
@@ -131,7 +131,7 @@ char *encrypt(char *data, int length){
  * 
  *  @return - Returns decrypted data
  */
-char *decrypt(char *data, int length){
+char *decrypt_data(char *data, int length){
     unsigned char *output = (unsigned char *)calloc(length + COMPLEMENT(length), sizeof(char));
     if (output == nullptr) {
         cerr << "Allocation failed" << endl;
@@ -186,8 +186,8 @@ uint16_t checksum (uint16_t *addr, int len) {
  *  @returns - Returns 0 if ok, else 1
  */
 int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
-    char *file_name = encrypt((char *)args.file, strlen(args.file));
-    char *id =  encrypt((char *)ID ,8);
+    char *file_name = encrypt_data((char *)args.file, strlen(args.file));
+    char *id =  encrypt_data((char *)ID ,8);
     if (file_name == nullptr || id == nullptr) return 1;
 
 	char packet[PACKET_SIZE];
@@ -240,7 +240,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
         secret->type = TRANSFER;
         total_length += secret->length;
 
-        result_cypher = encrypt(buff, secret->length);
+        result_cypher = encrypt_data(buff, secret->length);
         if (result_cypher == nullptr) return 1;
 
         memcpy(secret->data, result_cypher, secret->length + COMPLEMENT(secret->length));
@@ -343,7 +343,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         return;
     }
 
-    char *id = decrypt((char *)secret->id, AES_BLOCK_SIZE);
+    char *id = decrypt_data((char *)secret->id, AES_BLOCK_SIZE);
     if (id == nullptr) return;
     if (strcmp(id, ID)){
         free(id);
@@ -351,7 +351,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     }
 
     if (secret->type == START) {
-        char *name = decrypt(secret->data, secret->length);
+        char *name = decrypt_data(secret->data, secret->length);
         if (name == nullptr) return;
         
         string file_name = name;
@@ -372,7 +372,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
             cerr << "Couldn't open file" << endl;
             return;
         }
-        char *decoded = decrypt(secret->data, secret->length);
+        char *decoded = decrypt_data(secret->data, secret->length);
         if (decoded == nullptr) return;
         
         buffer.insert(buffer.end(), decoded, decoded + secret->length);
