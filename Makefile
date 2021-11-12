@@ -14,4 +14,4 @@ clean:
 		$(RM) $(TARGET)
 
 tar:
-		tar -cvf xnorek01.tar Makefile secret.cpp secret.1
+		tar -cvf xnorek01.tar Makefile secret.cpp secret.1 manual.pdf
