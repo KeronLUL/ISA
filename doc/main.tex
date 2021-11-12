@@ -82,7 +82,7 @@ Program slouží k posílání šifrovaných souborů přes skrytý kanál. Je k
 
 \section{Implementace}
 Projekt je implementován v jazyce C++. Celá implementace je uložena  v souboru \textbf{secret.cpp}.
-Nejdříve je nutné přeložit pomocí příkazu \textbf{make} a poté je možné program \textbf{secret} použít. 
+Nejdříve je nutné přeložit pomocí příkazu \textbf{make} a poté je možné program \textbf{secret} použít. Pokud je program překládán na serveru Merlin, je nutné použít příkaz \textbf{make merlin}, aby bylo možné projekt přeložit. Je to z důvodu zastaralé verze gcc, která je na serveru nastavená.
 
 Program se skládá ze dvou hlavnách částí: klient a server. Při spuštění programu lze specifikovat, která část se má spustit pomocí argumentu \textbf{-l}. Pokud je tento argument zadán, program funguje jako server, pokud ne, tak jako klient.
 
@@ -179,6 +179,8 @@ Nyní se rozšifruje položka na místě, kde by paket poslaný klientem měl id
 Pokud se jedná o požadovaný paket, následuje rozdělení podle typu paketu (atribut type struktury \emph{secrethdr}). Jedná-li se o typ \emph{START}, rozšifruje se název souboru a vytvoří se, případně přepíše, pokud již soubor existoval. Je-li to typ \emph{TRANSFER}, data se rozšifrují a ukládaji se do vektoru \emph{buffer}. Ten, pokud dosáhne velikosti 5MiB, je vypsán do souboru a vynulován. Tento buffer je použit z důvodu, aby nedocházelo k zahlcení programu díky I/O operacím. Jedná-li se o poslední typ \emph{END}, vypíše se zbytek bufferu a provede se kontrola, jestli nebyl ztracen nějaký paket. Poté klient vypíše hlášku "File transfered", aby uživatel dostal zpětnou vazbu.
 
 Jakmile funkce \textbf{got\_paket} skončí, server se vrací do \textbf{pcap\_loop}, kde čeká na další paket.
+
+Server lze ukončit pomocí signálu \emph{Ctrl + C}.
 
 \section{Návod na použití}
 Pro detailnější návod lze využít soubor \textbf{secret.1}, který slouží jako manuálová stránka. Manuálová stránka lze zobrazit pomocí následujícího příkazu: 
