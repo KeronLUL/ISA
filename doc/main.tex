@@ -168,7 +168,7 @@ Následuje čtení souboru. Čte se po částech velkých 1024 bytů, aby se dat
 Během posílání dat je použita funkce \textbf{poll} z knihovny \emph{poll.h}, aby se pakety odesílaly pouze tehdy, jakmile jsou připravené.
 \subsection{Server}
 
-Pokud je program spuštěn jako server, zavolá se funkce server. Zde se chytají pakety. Pro chytání paketů je využita knihovna \textbf{pcap/pcap.h}. Jako filter je použit \emph{icmp or icmpv6}, který chytá pouze ICMP pakety. Rozhraní, na kterém se pakety zachycují, se nazývá \emph{any}.
+Pokud je program spuštěn jako server, zavolá se funkce server. Zde se chytají pakety. Pro chytání paketů je využita knihovna \textbf{pcap/pcap.h}. Jako filter je použit \emph{icmp[icmptype] = icmp-echo or icmp6[icmp6type] = icmp6-echo}, který chytá pouze ICMP request pakety. Rozhraní, na kterém se pakety zachycují, se nazývá \emph{any}.
 
 Následuje samotné chytaní paketů. Na to se zde používá upravený kód z \cite{Tcpdump}. Změnou je použití \textbf{pcap\_loop} místo \textbf{pcap\_next}. Pokud nenaskytne chyba během otevíraní rozhraní, případně nastavovaní filtru, volá se funkce \textbf{pcal\_loop}, která když zachytí packet, volá callback funkci \textbf{gotPacket}.
 

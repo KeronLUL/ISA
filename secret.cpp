@@ -212,6 +212,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     pfds[0].fd = sock;
     pfds[0].events = POLLOUT;
 
+    icmp_header->type = ICMP_ECHO;
 	icmp_header->code = ICMP_ECHO;
 	icmp_header->checksum = 0;
 
@@ -409,19 +410,20 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
  */
 int server(){
     char errbuf[PCAP_ERRBUF_SIZE];
-    const char *filter = "icmp or icmp6";
+    const char *filter = "icmp[icmptype] = icmp-echo or icmp6[icmp6type] = icmp6-echo";
+    const char *interface = "any";
     struct bpf_program fp;
     pcap_t* handle; 
     bpf_u_int32 mask;
     bpf_u_int32 net;
 
-    if (pcap_lookupnet("any", &net, &mask, errbuf) == -1) {
+    if (pcap_lookupnet(interface, &net, &mask, errbuf) == -1) {
         cerr << errbuf << endl;
         net = 0;
         mask = 0;
     }
 
-    if ((handle = pcap_open_live("any", BUFF_SIZE, 1, 1000, errbuf)) == nullptr){
+    if ((handle = pcap_open_live(interface, BUFF_SIZE, 1, 1000, errbuf)) == nullptr){
         cerr << errbuf << endl;
         return 1;
     }
