@@ -14,6 +14,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/ip_icmp.h>
+#include <netinet/icmp6.h>
 #include <net/ethernet.h>
 #include <netinet/ether.h>
 #include <netinet/ip.h>
@@ -212,8 +213,8 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     pfds[0].fd = sock;
     pfds[0].events = POLLOUT;
 
-    icmp_header->type = ICMP_ECHO;
-	icmp_header->code = ICMP_ECHO;
+    icmp_header->type = serverinfo->ai_family == AF_INET ? ICMP_ECHO: ICMP6_ECHO_REQUEST;
+	icmp_header->code = icmp_header->type;
 	icmp_header->checksum = 0;
 
     memcpy((char *)secret->id, id, 16);
@@ -276,6 +277,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
         return 1;
         
     }
+    cout << "File '" << args.file << "' has been sent successfully to " << args.ip << endl; 
 
     free(id);
     free(file_name);
@@ -356,7 +358,9 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         if (name == nullptr) return;
         
         string file_name = name;
-        free(name);   
+        free(name);
+
+        cout << "Receiving file '" << file_name << "' ..." << endl;   
         if (filesystem::exists(file_name)) {
             cerr << "File already exists. File will be overwritten" << endl;
         }
@@ -396,7 +400,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         }
         total_file_length = 0;
         server_file.close();
-        cout << "File transfered" << endl;
+        cout << "File transfered" << endl << endl;
     }
 
     free(id);
