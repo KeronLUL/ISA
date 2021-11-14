@@ -214,7 +214,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
     pfds[0].events = POLLOUT;
 
     icmp_header->type = serverinfo->ai_family == AF_INET ? ICMP_ECHO: ICMP6_ECHO_REQUEST;
-	icmp_header->code = icmp_header->type;
+	icmp_header->code = 0;
 	icmp_header->checksum = 0;
 
     memcpy((char *)secret->id, id, 16);
