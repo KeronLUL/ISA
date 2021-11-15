@@ -24,7 +24,6 @@
 #define PACKET_SIZE 1500    // Size of a packet
 #define MAX_DATA_LEN 1024   // Maximum length of data in packet
 #define SIZE_SLL 16         // Size of Linux cooked capture header
-#define BUFF_SIZE 65616     // Bigger buffer for pcap so it doesn't overflow
 #define START 1
 #define TRANSFER 2
 #define END 3
@@ -338,7 +337,9 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     struct sll_header *sll = (struct sll_header *)packet;
     struct secrethdr *secret;
     if (ntohs(sll->sll_protocol) == ETHERTYPE_IP){
-        secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL + sizeof(iphdr));
+        struct iphdr *ip = (struct iphdr *)(packet + SIZE_SLL);
+        int ip_len = ip->ihl * 4;
+        secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL + ip_len);
     }else if (ntohs(sll->sll_protocol) == ETHERTYPE_IPV6) {
         secret = (struct secrethdr *)(packet + sizeof(struct icmphdr) + SIZE_SLL + sizeof(ip6_hdr));
     }else {
@@ -427,7 +428,7 @@ int server(){
         mask = 0;
     }
 
-    if ((handle = pcap_open_live(interface, BUFF_SIZE, 1, 1000, errbuf)) == nullptr){
+    if ((handle = pcap_open_live(interface, BUFSIZ, 1, 1000, errbuf)) == nullptr){
         cerr << errbuf << endl;
         return 1;
     }
