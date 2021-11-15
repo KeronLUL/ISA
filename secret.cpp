@@ -1,3 +1,7 @@
+/**
+ * ISA project - Send and receive file through hidden channel
+ * @author Karel Norek, xnorek01
+ */
 #include <iostream>
 #include <vector>
 #include <string>
