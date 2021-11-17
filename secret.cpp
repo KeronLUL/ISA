@@ -190,7 +190,7 @@ uint16_t checksum (uint16_t *addr, int len) {
  *  @returns - Returns 0 if ok, else 1
  */
 int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
-    char *file_name = encrypt_data((char *)args.file, strlen(args.file));
+    char *file_name = encrypt_data((char *)basename(args.file), strlen(basename(args.file)));
     char *id =  encrypt_data((char *)ID ,8);
     if (file_name == nullptr || id == nullptr) return 1;
 
@@ -221,7 +221,7 @@ int send_file(ArgumentParser args, struct addrinfo *serverinfo, int sock){
 	icmp_header->checksum = 0;
 
     memcpy((char *)secret->id, id, 16);
-    memcpy(secret->data, file_name, strlen(args.file) + COMPLEMENT(strlen(args.file)));
+    memcpy(secret->data, file_name, strlen(basename(args.file)) + COMPLEMENT(strlen(basename(args.file))));
     secret->type = START;
     secret->length = strlen(args.file);
     if (secret->length > 1024) {
